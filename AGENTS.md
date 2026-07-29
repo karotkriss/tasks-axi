@@ -46,7 +46,8 @@ CLI handlers operate through the `Store` interface, except for the deliberately 
 - **prune archives, never deletes (D4)** - surplus Done tasks are appended to `markdown.archive` or default `done-archive.md`. It keeps N _recognized_ tasks; free-form Done lines are preserved and not counted.
 - **`done` auto-prunes** to `config.doneKeep` (default 10) and archives, unless `--no-prune`.
 - **`done` on an already-Done task** stays idempotent but backfills supplied `--pr`, `--report`, and non-duplicate `--note` metadata without replacing the original closed date.
-- **`done --dropped` records `resolution: dropped`** (absent = completed; done-only and terminal everywhere like plain done). Markdown renders it as the `(closed DATE)` closure verb - that verb is no longer parse-only - `reopen` clears it, and `show`/`--json`/`list --fields resolution` expose it as a derived column.
+- **`done --dropped` records `resolution: dropped`** (absent = completed; done-only and terminal everywhere like plain done).
+  Markdown renders it with the `(closed DATE)` closure verb, which is no longer parse-only; `reopen` clears it, `show` and `--json` expose it, and `list --fields resolution` adds it as an opt-in column.
 - **Dependency mutations validate targets.** `add --blocked-by` and `block --by` reject missing blockers and self-blocks. Parsed dangling blockers are still treated as resolved for legacy hand-edited files.
 - **Blocking tasks are protected.** `rm` and single-id `mv` reject a task that still blocks active dependents; unblock or complete the dependents first.
   The `rm` guard is enforced at the seam (`requireNoActiveDependents` in `src/derive.ts`, derived from `list` + the dep graph) so backends whose remove de-manages instead of deleting are covered too.
