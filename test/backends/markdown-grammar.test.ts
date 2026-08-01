@@ -11,6 +11,10 @@ import {
 } from "../../src/backends/markdown-grammar.js";
 import type { Task } from "../../src/model.js";
 import {
+  encodePublicFollowup,
+  type PublicFollowup,
+} from "../../src/public-followup.js";
+import {
   FIRSTMATE_FIXTURE,
   FIXTURE,
   MULTI_REASON_FIXTURE,
@@ -138,6 +142,75 @@ describe("markdown grammar", () => {
       expect(task.title).toBe("superseded by the v2 plan");
       expect(task.closed).toBe("2026-06-20");
       expect(task.resolution).toBe("dropped");
+    });
+
+    it("ignores dropped resolution outside Done", () => {
+      const src =
+        "# Backlog\n\n## Queued\n- [ ] drop-q1 - still active (closed 2026-06-20)\n";
+      const doc = parseBacklog(src);
+      const task = tasksOf(doc)[0];
+      expect(task.closed).toBe("2026-06-20");
+      expect(task.resolution).toBeUndefined();
+      expect(renderBacklog(doc)).toBe(src);
+    });
+
+    it("ignores dropped resolution for a Done public-followup", () => {
+      const publicFollowup: PublicFollowup = {
+        schema_version: 1,
+        revision: 1,
+        request: {
+          request_id: "req-public-drop",
+          platform: "discord",
+          context_binding: { version: "ctx1", value: "ctx1_public_drop" },
+          public_safe_summary: "Public follow-up",
+          received_at: "2026-06-01T00:00:00Z",
+          followup_expires_at: "2026-07-01T00:00:00Z",
+          reservation_expires_at: "2026-08-01T00:00:00Z",
+        },
+        purpose: "promised-final",
+        expected_final: {
+          type: "explicit-answer",
+          project: null,
+          required_deliverables: [],
+          completion_policy: "all-required",
+        },
+        obligation_expires_at: "2026-09-01T00:00:00Z",
+        delivery: {
+          state: "waived",
+          delivery_key: "fd1_public_drop",
+          payload_digest: null,
+          attempt_count: 0,
+          last_error_code: null,
+          next_attempt_at: null,
+          receipt: null,
+          last_error: null,
+          waiver: {
+            approved_by: "captain",
+            reason: "No longer required",
+            waived_at: "2026-06-20T00:00:00Z",
+          },
+        },
+        work_relations: [],
+        lineage: {
+          predecessor_obligation_id: null,
+          successor_obligation_id: null,
+        },
+      };
+      const src =
+        "# Backlog\n\n## Done\n" +
+        "- [x] public-drop-d1 - Public follow-up (kind: public-followup) (closed 2026-06-20)\n" +
+        `  <!-- tasks-axi:public-followup/v1:${encodePublicFollowup(publicFollowup)} -->\n`;
+      const doc = parseBacklog(src);
+      const task = tasksOf(doc)[0];
+      expect(task.closed).toBe("2026-06-20");
+      expect(task.resolution).toBeUndefined();
+      expect(renderBacklog(doc)).toBe(src);
+
+      markAllDirty(doc);
+      const normalized = renderBacklog(doc);
+      const reparsed = parseBacklog(normalized);
+      markAllDirty(reparsed);
+      expect(renderBacklog(reparsed)).toBe(normalized);
     });
 
     it("leaves resolution absent for the completed closure verbs", () => {

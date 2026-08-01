@@ -11,6 +11,7 @@ import { validateDependencyId, validateId } from "../id.js";
 import type {
   Dep,
   Hold,
+  Resolution,
   State,
   Task,
   TaskInput,
@@ -21,7 +22,7 @@ import type {
   TaskUpdateResult,
   TransitionOpts,
 } from "../model.js";
-import { HOLD_KINDS } from "../model.js";
+import { HOLD_KINDS, RESOLUTIONS } from "../model.js";
 import {
   PUBLIC_FOLLOWUP_KIND,
   assertPublicFollowupMutation,
@@ -170,6 +171,16 @@ function normalizePriority(priority: number | undefined): number | undefined {
     );
   }
   return priority;
+}
+
+function normalizeResolution(resolution: Resolution): Resolution {
+  if (!RESOLUTIONS.includes(resolution)) {
+    throw new AxiError(
+      "Task resolution must be completed or dropped",
+      "VALIDATION_ERROR",
+    );
+  }
+  return resolution;
 }
 
 function normalizeHold(hold: Hold | undefined): Hold | undefined {
@@ -581,6 +592,7 @@ export class MarkdownStore implements Store {
       task.closed = normalizeDate(input.closed, "closed date");
     }
     if (input.resolution !== undefined) {
+      const resolution = normalizeResolution(input.resolution);
       if (state !== "done") {
         throw new AxiError(
           "resolution applies only to Done tasks",
@@ -590,8 +602,8 @@ export class MarkdownStore implements Store {
       if (!task.closed) {
         task.closed = normalizeDate(this.now(), "closed date");
       }
-      if (input.resolution !== "completed") {
-        task.resolution = input.resolution;
+      if (resolution !== "completed") {
+        task.resolution = resolution;
       }
     }
     return task;
@@ -651,6 +663,10 @@ export class MarkdownStore implements Store {
       const found = this.findEntry(doc, id);
       if (!found) throw new AxiError(`Task "${id}" not found`, "NOT_FOUND");
       const task = found.entry.task;
+      const patchResolution =
+        patch.resolution === undefined
+          ? undefined
+          : normalizeResolution(patch.resolution);
       if (
         isPublicFollowupTask(task) &&
         (patch.title !== undefined ||
@@ -762,7 +778,7 @@ export class MarkdownStore implements Store {
           );
         }
         const resolution =
-          patch.resolution === "completed" ? undefined : patch.resolution;
+          patchResolution === "completed" ? undefined : patchResolution;
         if (task.resolution !== resolution) {
           if (resolution) {
             task.resolution = resolution;

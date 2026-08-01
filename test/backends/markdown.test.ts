@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { MarkdownStore } from "../../src/backends/markdown.js";
 import { readyTasks } from "../../src/derive.js";
 import { AxiError } from "../../src/errors.js";
+import type { TaskInput, TaskPatch } from "../../src/model.js";
 import {
   FIRSTMATE_FIXTURE,
   makeBacklog,
@@ -62,6 +63,25 @@ describe("MarkdownStore", () => {
           message: "resolution applies only to Done tasks",
         });
         expect(await b.store.get("active-drop-q1")).toBeNull();
+      } finally {
+        b.cleanup();
+      }
+    });
+
+    it("rejects an invalid resolution from an untyped create caller", async () => {
+      const b = makeBacklog();
+      try {
+        const input = {
+          id: "invalid-resolution-d1",
+          title: "invalid resolution",
+          state: "done",
+          resolution: "cancelled",
+        } as unknown as TaskInput;
+        await expect(b.store.create(input)).rejects.toMatchObject({
+          code: "VALIDATION_ERROR",
+          message: "Task resolution must be completed or dropped",
+        });
+        expect(await b.store.get("invalid-resolution-d1")).toBeNull();
       } finally {
         b.cleanup();
       }
@@ -361,6 +381,23 @@ describe("MarkdownStore", () => {
   });
 
   describe("update", () => {
+    it("rejects an invalid resolution from an untyped update caller", async () => {
+      const b = makeBacklog();
+      try {
+        const before = b.read();
+        const patch = { resolution: "cancelled" } as unknown as TaskPatch;
+        await expect(
+          b.store.update("lease-core-t4", patch),
+        ).rejects.toMatchObject({
+          code: "VALIDATION_ERROR",
+          message: "Task resolution must be completed or dropped",
+        });
+        expect(b.read()).toBe(before);
+      } finally {
+        b.cleanup();
+      }
+    });
+
     it("replaces the body as continuation lines", async () => {
       const b = makeBacklog(
         "# Backlog\n\n## Queued\n- [ ] task-q1 - title\n  old note\n\n## Done\n",

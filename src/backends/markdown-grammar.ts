@@ -503,7 +503,13 @@ function buildTask(
   if (body !== undefined) task.body = body;
   if (tags.created) task.created = tags.created;
   if (tags.closed) task.closed = tags.closed;
-  if (tags.resolution) task.resolution = tags.resolution;
+  if (
+    tags.resolution &&
+    state === "done" &&
+    tags.kind !== PUBLIC_FOLLOWUP_KIND
+  ) {
+    task.resolution = tags.resolution;
+  }
   if (tags.priority !== undefined) task.priority = tags.priority;
   if (tags.hold) task.hold = tags.hold;
   return task;
