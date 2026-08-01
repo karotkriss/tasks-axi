@@ -200,6 +200,7 @@ An item's body includes every following indented or blank line, so multi-paragra
 Trailing separator blanks remain with the item's raw source for byte-exact preservation without becoming part of its structured body.
 Maintenance commands are explicit exceptions: `render` normalizes every recognized task, `prune` trims the chosen section into the archive, and `mv` writes both source and destination backlogs.
 `mv <id> [<id>...] --to <path-or-dir>` moves one or more tasks as one atomic cross-file transaction.
+The active source backend must be markdown.
 To move a dependency-connected set, include every linked blocker and active dependent in the same command, unless the other endpoint already exists in the destination backlog.
 The command refuses a move that would strand a dependency across the two files, while preserving intra-set `blocked-by` links and their reason strings.
 Moved tasks are re-rendered canonically, so their multi-paragraph bodies remain intact but a trailing blank separator before the next item or section is dropped.
@@ -249,7 +250,8 @@ Body replacements with `--archive-body` append superseded bodies to `note-archiv
 
 ## Backends
 
-P1 ships the **markdown** backend only, behind a narrow `Store` interface so additional backends slot in without touching the CLI layer.
+P1 ships the **markdown** backend only, behind a narrow `Store` interface.
+Command handlers derive shared behavior from the core store methods and refuse features that a backend does not declare; `mv` remains deliberately markdown-only.
 
 | Backend                | Status  |
 | ---------------------- | ------- |
