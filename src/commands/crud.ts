@@ -12,11 +12,7 @@ import { takeBody } from "../body.js";
 import { deriveLinks, extractTags } from "../backends/markdown-grammar.js";
 import { renderMutation, stateLabel, taskToJson } from "../confirm.js";
 import { requireCtx, type TasksContext } from "../context.js";
-import {
-  blockedIds,
-  heldTasks,
-  requireNoActiveDependents,
-} from "../derive.js";
+import { blockedIds, heldTasks, requireNoActiveDependents } from "../derive.js";
 import { AxiError, notFound, requireCapability } from "../errors.js";
 import { parseFields } from "../fields.js";
 import { formatCountLine } from "../format.js";

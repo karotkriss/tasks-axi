@@ -84,7 +84,11 @@ class GuardlessStore implements Store {
 function guardlessCtx(store: GuardlessStore): TasksContext {
   return {
     store,
-    config: { backend: "guardless", path: "/nonexistent/backlog.md", doneKeep: 10 },
+    config: {
+      backend: "guardless",
+      path: "/nonexistent/backlog.md",
+      doneKeep: 10,
+    },
   };
 }
 

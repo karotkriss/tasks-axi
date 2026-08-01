@@ -5,13 +5,12 @@ P1 ships only the markdown backend behind a `Store` seam; sqlite (P2) and remote
 
 ## Architecture
 
-The CLI layer never knows which backend is active — it only talks to the `Store` interface.
+CLI handlers operate through the `Store` interface, except for the deliberately markdown-only `mv` command documented in `src/commands/state.ts`.
 
 - `src/cli.ts` — `runAxiCli` wiring: `DESCRIPTION`, `TOP_HELP`, the verb→handler map (with aliases create/view/edit/delete/close), the optional `task` noun prefix, and the global `--backend` / `--file` flags (stripped before handlers, parsed for `resolveContext`).
 - `src/context.ts` — `resolveTasksContext` builds the backend `Store` + `ResolvedConfig`; every command receives this `TasksContext`.
 - `src/store.ts` - the `Store` interface and `Capabilities`. Core contract: `create/get/update/remove/list/transition/addDep/removeDep/updatePublicFollowup`. `prune`/`render` are optional and capability-gated.
   Declared capability booleans are enforced at the command layer with `requireCapability` (`src/errors.ts`) - gate any new capability-dependent command there, never inside a backend.
-  `mv` refuses a non-markdown source outright (`src/commands/state.ts`): a cross-backend move would copy-then-delete and lose backend-specific state.
 - `src/model.ts` — the `Task` data model (report §5).
 - `src/derive.ts` - worker `blocked` / `ready` / active `held` and public delivery readiness are derived in the CLI from `list` + the dep graph + hold date gates, never Store methods, so every backend gets them for free.
 - `src/backends/markdown*.ts` — the only P1 backend.
@@ -48,7 +47,8 @@ The CLI layer never knows which backend is active — it only talks to the `Stor
 - **`done` auto-prunes** to `config.doneKeep` (default 10) and archives, unless `--no-prune`.
 - **`done` on an already-Done task** stays idempotent but backfills supplied `--pr`, `--report`, and non-duplicate `--note` metadata without replacing the original closed date.
 - **Dependency mutations validate targets.** `add --blocked-by` and `block --by` reject missing blockers and self-blocks. Parsed dangling blockers are still treated as resolved for legacy hand-edited files.
-- **Blocking tasks are protected.** `rm` and single-id `mv` reject a task that still blocks active dependents; unblock or complete the dependents first. The `rm` guard is enforced at the seam (`requireNoActiveDependents` in `src/derive.ts`, derived from `list` + the dep graph) so backends whose remove de-manages instead of deleting are covered too.
+- **Blocking tasks are protected.** `rm` and single-id `mv` reject a task that still blocks active dependents; unblock or complete the dependents first.
+  The `rm` guard is enforced at the seam (`requireNoActiveDependents` in `src/derive.ts`, derived from `list` + the dep graph) so backends whose remove de-manages instead of deleting are covered too.
 - **`mv` is a multi-id atomic cross-file move.** `mv <id> [<id>...] --to <path>` moves a whole connected set in one transaction (`MarkdownStore.moveManyTo` under a two-file `withLocks`): all land or none do, no intermediate on-disk state that loses a link. Intra-set `blocked-by` edges (reason strings included) survive because both endpoints travel together; `requireNoSplitDeps` refuses and names any edge whose blocker/dependent would be stranded across the two files. Single-id `mv` is just N=1 (`moveTo` delegates to `moveManyTo`), so its byte output is unchanged. Moved items are re-rendered canonically, so trailing blank separators before the next item/section are dropped (a move-then-move-back is byte-exact only when the source had no such trailing blank).
 - **Structured holds gate readiness.** `hold <id> --reason "<text>" [--until YYYY-MM-DD] [--kind captain|external|load|parked|future]` writes canonical hold tags; `unhold <id>` clears them.
   Hold reasons are single-line tag values without parentheses because parentheses delimit managed tags.
