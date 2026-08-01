@@ -1,3 +1,4 @@
+import { AxiError } from "./errors.js";
 import type { Task } from "./model.js";
 import {
   PUBLIC_FOLLOWUP_KIND,
@@ -102,6 +103,35 @@ export function publicFollowupsByDeliveryState(
       task.kind === PUBLIC_FOLLOWUP_KIND &&
       task.public_followup !== undefined &&
       (state === undefined || task.public_followup.delivery.state === state),
+  );
+}
+
+/** Active tasks still blocked-by `id` (the rm/mv dependents guard input). */
+export function activeDependents(tasks: Task[], id: string): string[] {
+  return tasks
+    .filter(
+      (task) =>
+        task.state !== "done" &&
+        task.deps.some((dep) => dep.type === "blocked-by" && dep.id === id),
+    )
+    .map((task) => task.id);
+}
+
+/**
+ * The blocking-task protection for `rm` and single-id `mv`, derived in the CLI
+ * from `list` + the dep graph so every backend gets it - a backend whose
+ * `remove` has no guard of its own (or de-manages rather than deletes) is
+ * still protected at the seam.
+ */
+export function requireNoActiveDependents(tasks: Task[], id: string): void {
+  const dependents = activeDependents(tasks, id);
+  if (dependents.length === 0) return;
+  throw new AxiError(
+    `Task "${id}" is still blocking active tasks: ${dependents.join(", ")}`,
+    "VALIDATION_ERROR",
+    [
+      `Unblock them first, e.g. \`tasks-axi unblock ${dependents[0]} --by ${id}\``,
+    ],
   );
 }
 

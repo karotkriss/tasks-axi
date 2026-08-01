@@ -12,7 +12,11 @@ import { takeBody } from "../body.js";
 import { deriveLinks, extractTags } from "../backends/markdown-grammar.js";
 import { renderMutation, stateLabel, taskToJson } from "../confirm.js";
 import { requireCtx, type TasksContext } from "../context.js";
-import { blockedIds, heldTasks } from "../derive.js";
+import {
+  blockedIds,
+  heldTasks,
+  requireNoActiveDependents,
+} from "../derive.js";
 import { AxiError, notFound, requireCapability } from "../errors.js";
 import { parseFields } from "../fields.js";
 import { formatCountLine } from "../format.js";
@@ -612,6 +616,10 @@ export async function rmCommand(
   if (!(await store.get(id))) {
     throw notFound(id, { globals: context?.suggestionGlobals });
   }
+  // Ruling: the blocking-task protection lives at the seam, not only inside
+  // the markdown store - a backend whose remove de-manages instead of
+  // deleting still refuses to orphan active dependents.
+  requireNoActiveDependents((await store.list({})).items, id);
   await store.remove(id);
 
   return renderMutation({
