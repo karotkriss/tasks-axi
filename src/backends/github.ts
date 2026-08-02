@@ -25,6 +25,7 @@ import {
   composeIssueBody,
   parseIssueBody,
   renderManagedBlock,
+  validateIssueProse,
   type ManagedFields,
 } from "./github-body.js";
 import { deriveLinks } from "./markdown-grammar.js";
@@ -61,6 +62,13 @@ import {
  *   than papered over.
  */
 
+/**
+ * Every label the backend projects lives under this prefix, so the managed
+ * namespace is durable, collision-free with human labels, and bulk-manageable
+ * (e.g. `gh label list --search tasks-axi:`).
+ */
+export const LABEL_PREFIX = "tasks-axi:";
+
 export interface GithubLabels {
   inFlight: string;
   blocked: string;
@@ -94,6 +102,7 @@ function dateOf(iso: string): string {
 }
 
 function setProse(record: GithubRecord, prose: string): void {
+  validateIssueProse(prose);
   record.prose = prose;
   if (prose === "") {
     delete record.task.body;
@@ -123,9 +132,9 @@ export class GithubStore implements Store {
   constructor(options: GithubStoreOptions) {
     this.client = options.client ?? createGhIssuesClient(options.repo);
     this.labels = {
-      inFlight: options.labels?.inFlight ?? "in-flight",
-      blocked: options.labels?.blocked ?? "blocked",
-      held: options.labels?.held ?? "held",
+      inFlight: options.labels?.inFlight ?? `${LABEL_PREFIX}in-flight`,
+      blocked: options.labels?.blocked ?? `${LABEL_PREFIX}blocked`,
+      held: options.labels?.held ?? `${LABEL_PREFIX}held`,
     };
     const names = this.managedLabelNames();
     if (names.some((name) => name.trim() === "") || new Set(names).size !== 3) {
@@ -133,6 +142,16 @@ export class GithubStore implements Store {
         "github projection label names must be non-empty and distinct",
         "VALIDATION_ERROR",
         ["Fix the [github] *_label values in .tasks.toml"],
+      );
+    }
+    if (names.some((name) => !name.startsWith(LABEL_PREFIX))) {
+      throw new AxiError(
+        `github projection label names must carry the "${LABEL_PREFIX}" prefix`,
+        "VALIDATION_ERROR",
+        [
+          "The prefix keeps every projected label in one durable, bulk-manageable namespace",
+          "Fix the [github] *_label values in .tasks.toml",
+        ],
       );
     }
     this.now = options.now ?? currentLocalDate;
@@ -191,6 +210,7 @@ export class GithubStore implements Store {
     }
     this.sortRecords(records);
     this.markLabelDrift(records);
+    this.markParentDrift(records);
     return records;
   }
 
@@ -334,6 +354,92 @@ export class GithubStore implements Store {
     }
   }
 
+  // -------------------------------------------------------------------------
+  // Native sub-issue links: a write-time projection of `parent:` edges. The
+  // block stays the source of truth; the native link is display/navigation.
+  // GitHub allows one parent per issue, so only the FIRST parent edge is
+  // projected; further parent edges stay block-only. A native parent pointing
+  // at an issue outside the managed set is a human link and is left alone.
+  // -------------------------------------------------------------------------
+
+  private parentDrifted(
+    records: GithubRecord[],
+  ): Array<{ record: GithubRecord; want: number | null }> {
+    const byId = new Map(records.map((r) => [r.task.id, r]));
+    const managedNumbers = new Set(records.map((r) => r.issue.number));
+    const drifted: Array<{ record: GithubRecord; want: number | null }> = [];
+    for (const record of records) {
+      const parentDep = record.task.deps.find((dep) => dep.type === "parent");
+      const parent = parentDep ? byId.get(parentDep.id) : undefined;
+      const want = parent ? parent.issue.number : null;
+      const have = record.issue.parentNumber;
+      if (want === have) continue;
+      if (want === null && (have === null || !managedNumbers.has(have))) {
+        continue;
+      }
+      drifted.push({ record, want });
+    }
+    return drifted;
+  }
+
+  private markParentDrift(records: GithubRecord[]): void {
+    for (const { record } of this.parentDrifted(records)) {
+      record.task.meta = { ...record.task.meta, parent_drift: true };
+    }
+  }
+
+  private markParentProjectionDegraded(
+    record: GithubRecord,
+    error: unknown,
+  ): void {
+    record.task.meta = {
+      ...record.task.meta,
+      parent_drift: true,
+      parent_projection_degraded: true,
+    };
+    const rawReason =
+      error instanceof Error ? error.message : "unknown projection error";
+    const reason = rawReason.replace(/\s+/g, " ").trim().slice(0, 240);
+    this.warn(
+      `warning: sub-issue projection degraded on issue #${record.issue.number}: ${reason}; run tasks-axi render to resync`,
+    );
+  }
+
+  private async refreshParentLinks(records: GithubRecord[]): Promise<void> {
+    const managedNumbers = new Set(records.map((r) => r.issue.number));
+    for (const { record, want } of this.parentDrifted(records)) {
+      if (
+        record.issue.parentNumber !== null &&
+        !managedNumbers.has(record.issue.parentNumber)
+      ) {
+        record.task.meta = { ...record.task.meta, parent_drift: true };
+        continue;
+      }
+      try {
+        if (want === null) {
+          await this.client.removeSubIssue(
+            record.issue.parentNumber as number,
+            record.issue.id,
+          );
+        } else {
+          await this.client.addSubIssue(
+            want,
+            record.issue.id,
+            record.issue.parentNumber !== null,
+          );
+        }
+      } catch (error) {
+        this.markParentProjectionDegraded(record, error);
+        continue;
+      }
+      record.issue.parentNumber = want;
+      if (record.task.meta?.parent_drift) delete record.task.meta.parent_drift;
+      if (record.task.meta?.parent_projection_degraded) {
+        delete record.task.meta.parent_projection_degraded;
+      }
+    }
+  }
+
   private markProjectionDegraded(record: GithubRecord, error: unknown): void {
     record.task.meta = {
       ...record.task.meta,
@@ -372,6 +478,7 @@ export class GithubStore implements Store {
         delete record.task.meta.label_projection_degraded;
       }
     }
+    await this.refreshParentLinks(records);
   }
 
   // -------------------------------------------------------------------------
@@ -674,32 +781,67 @@ export class GithubStore implements Store {
   }
 
   /**
-   * `rm` de-manages (design §4.4): strip the managed block and close the issue
-   * as not_planned, leaving an ordinary closed issue whose title and prose
-   * survive as history. Non-destructive; no elevated permission needed.
+   * `rm` de-manages (design §4.4): retract managed projections before stripping
+   * the block and closing as not_planned. Cleanup is resumable, and the issue
+   * stays managed until every required retraction succeeds.
    */
   async remove(id: string): Promise<Task> {
     const records = await this.loadAll();
     const record = this.findRecord(records, id);
     this.requireNoActiveDependents(records, id);
+    const managedNumbers = new Set(records.map((r) => r.issue.number));
+    const failRemoval = (): AxiError =>
+      new AxiError(
+        `Sub-issue retraction for task "${id}" is incomplete but resumable`,
+        "UNKNOWN",
+        [`Run \`tasks-axi rm ${id}\` again to resume retraction`],
+      );
+    // Link retraction is resumable, while managed state changes atomically only
+    // after every required projection has been removed.
+    if (record.issue.parentNumber !== null) {
+      const parentNumber = record.issue.parentNumber;
+      if (managedNumbers.has(parentNumber)) {
+        try {
+          await this.client.removeSubIssue(parentNumber, record.issue.id);
+        } catch {
+          throw failRemoval();
+        }
+        record.issue.parentNumber = null;
+      }
+    }
+    for (const child of records) {
+      if (child === record) continue;
+      if (child.issue.parentNumber !== record.issue.number) continue;
+      try {
+        await this.client.removeSubIssue(record.issue.number, child.issue.id);
+      } catch {
+        throw failRemoval();
+      }
+      child.issue.parentNumber = null;
+    }
+
+    const remove = this.managedLabelNames();
+    try {
+      await this.client.updateLabels(record.issue.number, {
+        add: [],
+        remove,
+      });
+    } catch {
+      throw new AxiError(
+        `Label retraction for task "${id}" is incomplete but resumable`,
+        "UNKNOWN",
+        [`Run \`tasks-axi rm ${id}\` again to resume retraction`],
+      );
+    }
+    record.issue.labels = record.issue.labels.filter(
+      (label) => !remove.includes(label),
+    );
+
     await this.client.updateIssue(record.issue.number, {
       body: record.prose,
       state: "closed",
       state_reason: "not_planned",
     });
-    const remove = record.issue.labels.filter((label) =>
-      this.managedLabelNames().includes(label),
-    );
-    if (remove.length > 0) {
-      try {
-        await this.client.updateLabels(record.issue.number, {
-          add: [],
-          remove,
-        });
-      } catch (error) {
-        this.markProjectionDegraded(record, error);
-      }
-    }
     records.splice(records.indexOf(record), 1);
     await this.refreshProjections(records);
     return record.task;
