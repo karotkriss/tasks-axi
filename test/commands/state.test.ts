@@ -1,4 +1,10 @@
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
@@ -13,7 +19,7 @@ import {
   unholdCommand,
 } from "../../src/commands/state.js";
 import { listCommand } from "../../src/commands/crud.js";
-import { makeBacklog } from "../helpers.js";
+import { makeBacklog, makeFakeBackendBacklog } from "../helpers.js";
 
 describe("state commands", () => {
   it("rejects malformed primary ids before store lookup", async () => {
@@ -282,6 +288,126 @@ describe("state commands", () => {
       }
     });
 
+    it("records a dropped close with --dropped", async () => {
+      const b = makeBacklog();
+      try {
+        const out = await doneCommand(
+          ["cert-cleanup", "--dropped", "--no-prune"],
+          b.ctx,
+        );
+        expect(out).toContain("done cert-cleanup -> Done (dropped)");
+        expect(b.read()).toContain("(closed 2026-07-01)");
+      } finally {
+        b.cleanup();
+      }
+    });
+
+    it("reports the resolution in --json, defaulting to completed", async () => {
+      const b = makeBacklog();
+      try {
+        const droppedOut = JSON.parse(
+          await doneCommand(
+            ["cert-cleanup", "--dropped", "--no-prune", "--json"],
+            b.ctx,
+          ),
+        ) as { task: { resolution: string } };
+        expect(droppedOut.task.resolution).toBe("dropped");
+
+        const plainOut = JSON.parse(
+          await doneCommand(
+            ["release-validation", "--no-prune", "--json"],
+            b.ctx,
+          ),
+        ) as { task: { resolution: string } };
+        expect(plainOut.task.resolution).toBe("completed");
+      } finally {
+        b.cleanup();
+      }
+    });
+
+    it("is idempotent when re-running --dropped on a dropped task", async () => {
+      const b = makeBacklog();
+      try {
+        await doneCommand(["cert-cleanup", "--dropped", "--no-prune"], b.ctx);
+        const out = JSON.parse(
+          await doneCommand(
+            ["cert-cleanup", "--dropped", "--no-prune", "--json"],
+            b.ctx,
+          ),
+        ) as { already?: boolean; task: { resolution: string } };
+        expect(out.already).toBe(true);
+        expect(out.task.resolution).toBe("dropped");
+        expect(b.read().match(/\(closed 2026-07-01\)/g)).toHaveLength(1);
+      } finally {
+        b.cleanup();
+      }
+    });
+
+    it("backfills --dropped on an already done task without moving the close date", async () => {
+      const b = makeBacklog();
+      try {
+        const out = JSON.parse(
+          await doneCommand(
+            ["lease-core-t4", "--dropped", "--no-prune", "--json"],
+            b.ctx,
+          ),
+        ) as { already?: boolean; task: { resolution: string } };
+        expect(out.already).toBe(true);
+        expect(out.task.resolution).toBe("dropped");
+        const line = b
+          .read()
+          .split("\n")
+          .find((l) => l.startsWith("- [x] lease-core-t4"))!;
+        expect(line).toContain("(closed 2026-06-22)");
+        expect(line).not.toContain("(merged");
+      } finally {
+        b.cleanup();
+      }
+    });
+
+    it("stamps and persists a close date when backfilling an undated done task", async () => {
+      const b = makeBacklog();
+      try {
+        const out = JSON.parse(
+          await doneCommand(
+            ["multi-line-w8", "--dropped", "--no-prune", "--json"],
+            b.ctx,
+          ),
+        ) as {
+          already?: boolean;
+          task: { closed: string; resolution: string };
+        };
+        expect(out.already).toBe(true);
+        expect(out.task.closed).toBe("2026-07-01");
+        expect(out.task.resolution).toBe("dropped");
+        expect(b.read()).toContain(
+          "- [x] multi-line-w8 - SCOUT - data/multi-line-w8/report.md: isolated e2e of the feature. (closed 2026-07-01)",
+        );
+
+        const persisted = await b.store.get("multi-line-w8");
+        expect(persisted?.closed).toBe("2026-07-01");
+        expect(persisted?.resolution).toBe("dropped");
+      } finally {
+        b.cleanup();
+      }
+    });
+
+    it("exposes resolution as an opt-in list column", async () => {
+      const b = makeBacklog();
+      try {
+        await doneCommand(["cert-cleanup", "--dropped", "--no-prune"], b.ctx);
+        const out = await listCommand(
+          ["--state", "done", "--fields", "resolution"],
+          b.ctx,
+        );
+        expect(out).toContain("resolution");
+        expect(out).toContain("dropped");
+        expect(out).toContain("completed");
+      } finally {
+        b.cleanup();
+      }
+    });
+
     it("backfills metadata on an already done task without pruning", async () => {
       const b = makeBacklog();
       try {
@@ -411,6 +537,23 @@ describe("state commands", () => {
         b.cleanup();
       }
     });
+
+    it("clears a dropped resolution so re-completion is a plain done", async () => {
+      const b = makeBacklog();
+      try {
+        await doneCommand(["cert-cleanup", "--dropped", "--no-prune"], b.ctx);
+        const reopened = JSON.parse(
+          await reopenCommand(["cert-cleanup", "--json"], b.ctx),
+        ) as { task: { resolution: string | null } };
+        expect(reopened.task.resolution).toBeNull();
+        expect(b.read()).not.toContain("(closed 2026-07-01)");
+
+        await doneCommand(["cert-cleanup", "--no-prune"], b.ctx);
+        expect(b.read()).toContain("(done 2026-07-01)");
+      } finally {
+        b.cleanup();
+      }
+    });
   });
 
   describe("block / unblock", () => {
@@ -532,6 +675,25 @@ describe("state commands", () => {
           ),
         ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
         expect(b.read()).not.toContain("blocked-by: owns-widget-h7");
+      } finally {
+        b.cleanup();
+      }
+    });
+
+    it("refuses when the backend declares deps unsupported", async () => {
+      const b = makeFakeBackendBacklog({ deps: false });
+      try {
+        await expect(
+          blockCommand(["cert-cleanup", "--by", "owns-widget-h7"], b.ctx),
+        ).rejects.toMatchObject({
+          code: "UNSUPPORTED",
+          message: "The fake backend does not support dependencies",
+        });
+        expect(b.read()).not.toContain("blocked-by: owns-widget-h7");
+        await expect(
+          unblockCommand(["lease-adopt", "--by", "lease-core-t4"], b.ctx),
+        ).rejects.toMatchObject({ code: "UNSUPPORTED" });
+        expect(b.read()).toContain("blocked-by: lease-core-t4");
       } finally {
         b.cleanup();
       }
@@ -895,6 +1057,24 @@ describe("state commands", () => {
       } finally {
         b.cleanup();
         target.cleanup();
+      }
+    });
+
+    it("refuses a non-markdown source instead of copy-deleting the task", async () => {
+      const b = makeFakeBackendBacklog();
+      const targetPath = join(b.dir, "target.md");
+      try {
+        await expect(
+          mvCommand(["cert-cleanup", "--to", targetPath], b.ctx),
+        ).rejects.toMatchObject({
+          code: "UNSUPPORTED",
+          message:
+            "mv moves tasks between markdown backlog files; the fake backend cannot be a move source",
+        });
+        expect(await b.ctx.store.get("cert-cleanup")).not.toBeNull();
+        expect(existsSync(targetPath)).toBe(false);
+      } finally {
+        b.cleanup();
       }
     });
 
