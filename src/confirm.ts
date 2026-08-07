@@ -12,7 +12,7 @@
 import { activeBlockers, isHoldActive } from "./derive.js";
 import type { State, Task } from "./model.js";
 import { clonePublicFollowup } from "./public-followup.js";
-import { renderHelp, renderOutput } from "./toon.js";
+import { renderHelp, renderLines, renderOutput } from "./toon.js";
 
 const STATE_LABELS: Record<State, string> = {
   queued: "Queued",
@@ -69,7 +69,7 @@ export function renderMutation(output: MutationOutput): string {
   const blocks = [renderConfirm(output.confirm)];
   if (output.already) blocks.push("already: true");
   if (output.notices && output.notices.length > 0) {
-    blocks.push(output.notices.join("\n"));
+    blocks.push(renderLines("notices", output.notices));
   }
   if (output.detail) blocks.push(output.detail);
   if (output.suggestions && output.suggestions.length > 0) {

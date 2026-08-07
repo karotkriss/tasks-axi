@@ -68,11 +68,16 @@ function renderPrimitive(value: string): string {
   return encoded.slice(prefix.length);
 }
 
-/** Render help suggestions as a one-item-per-line TOON primitive array. */
-export function renderHelp(lines: string[]): string {
+/** Render a labeled one-item-per-line TOON primitive array. */
+export function renderLines(label: string, lines: string[]): string {
   if (lines.length === 0) return "";
   const indented = lines.map((l) => `  - ${renderPrimitive(l)}`).join("\n");
-  return `help[${lines.length}]:\n${indented}`;
+  return `${label}[${lines.length}]:\n${indented}`;
+}
+
+/** Render help suggestions as a one-item-per-line TOON primitive array. */
+export function renderHelp(lines: string[]): string {
+  return renderLines("help", lines);
 }
 
 /** Combine multiple TOON blocks into a single output string. */
