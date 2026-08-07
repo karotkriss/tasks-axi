@@ -32,6 +32,7 @@ Use tasks-axi whenever a task touches the backlog: filing or dispatching work, m
 4. `add` takes a caller-supplied id (the join key), e.g. `tasks-axi add fm-x "title" --kind ship --repo firstmate --start`; or pass `--mint` to generate a slug-xx id from the title.
 5. `done <id> --pr <url>` (or `--report <path>`) closes a task and records the link.
    The Markdown backend also prunes its retained Done list into an archive.
+   A GitHub issue linked with `add`/`update --issue <url>` is closed via the gh CLI, fail-soft: a failed close is reported but never fails the transition.
    Then `ready` shows work it unblocked.
 6. `hold <id> --reason "<text>"` pauses dispatch without prose parsing; `ready` excludes active holds by default, and `ready --include-held` shows a separate held group.
    Use `--until YYYY-MM-DD` for a date gate that becomes inactive on and after that date.

@@ -95,6 +95,10 @@ tasks-axi start firstmate-lease-adopt
 tasks-axi done sm-idle-handoff-q8 --pr https://github.com/owner/repo/pull/42
 tasks-axi reopen some-task
 
+# link the GitHub issue that mirrors a task; done then closes it via the gh CLI
+tasks-axi add fleet-sync-f3 "sync fleet state" --issue https://github.com/owner/repo/issues/7
+tasks-axi done fleet-sync-f3 --pr https://github.com/owner/repo/pull/42
+
 # dependencies, holds, and the ready queue
 tasks-axi block firstmate-lease-adopt --by treehouse-lease-t4
 tasks-axi hold firstmate-lease-adopt --reason "captain decision pending" --kind captain
@@ -129,6 +133,9 @@ Running `done` again on an already Done task can still backfill a new `--pr`, `-
 `done <id> --dropped` records the close as deliberately abandoned rather than completed (`resolution: dropped`); plain `done` retains the implicit `completed` default and writes no resolution tag.
 `show` and the opt-in `list --fields resolution` column report `completed` or `dropped` for Done tasks and `-` otherwise; JSON task objects use the same Done values and `null` otherwise.
 `reopen` clears the resolution, so a later plain `done` records a normal completion.
+`add --issue <url>` (or `update --issue <url>`) links the GitHub issue that mirrors a task, so the backlog owns the issue's lifecycle instead of depending on `Closes #N` in a PR body.
+When `done` runs on a task with a linked issue, it closes that issue with `gh issue close <url> --reason completed` (`--reason "not planned"` when closed with `--dropped`), commenting with the task's recorded `--pr` URL when one exists.
+The close is fail-soft: the done-transition always lands first, and a failed close (missing `gh`, no auth, network error) is reported loudly in the output together with the manual close command, so the operator can act.
 `hold <id> --reason "<text>"` records an intentional pause without turning it into prose, and `unhold <id>` clears it.
 The reason must be single-line text without parentheses because parentheses are reserved for canonical markdown tags.
 Active holds are excluded from `ready`; a hold with `--until YYYY-MM-DD` becomes inactive on and after that date, so the task can surface as ready again if nothing else blocks it.
@@ -217,7 +224,7 @@ It gently formalizes the inline tags a backlog already uses as the canonical fie
 - `(kind: X)` - task kind, when not already implied by a leading `SHIP` / `SCOUT` / `DOCS-ONLY` / `PERSISTENT SECONDMATE` word
 - `(priority: 0-4)` - optional priority, also accepted through `add` / `update --priority`
 - `(hold: <reason>)`, `(hold-kind: captain|external|load|parked|future)`, `(hold-until: YYYY-MM-DD)` - structured dispatch holds written by `hold`
-- PR urls, `data/<id>/report.md` paths, and other `http(s)` urls - typed links
+- PR urls, GitHub issue urls, `data/<id>/report.md` paths, and other `http(s)` urls - typed links
 
 `tasks-axi render` rewrites every id'd task into this canonical form; free-form lines are left untouched.
 Bare dependency edges render immediately after the title, while reason-bearing dependency edges render after the parenthetical tags so the reason stays attached to the edge on the next parse.

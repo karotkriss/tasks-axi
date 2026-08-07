@@ -6,6 +6,7 @@ import {
   resolveConfig,
 } from "./config.js";
 import { AxiError } from "./errors.js";
+import type { IssueCloser } from "./gh.js";
 import type { Store } from "./store.js";
 import type { SuggestionGlobals } from "./suggestions.js";
 
@@ -18,6 +19,8 @@ export interface TasksContext {
   store: Store;
   config: ResolvedConfig;
   suggestionGlobals?: SuggestionGlobals;
+  /** Test seam for close-on-done; `done` defaults to the gh CLI closer. */
+  issueCloser?: IssueCloser;
 }
 
 export function resolveTasksContext(

@@ -21,8 +21,21 @@ import {
 } from "../derive.js";
 import { AxiError, notFound, requireCapability } from "../errors.js";
 import { formatCountLine } from "../format.js";
+import {
+  closeIssues,
+  ghIssueCloser,
+  type IssueCloseOutcome,
+  type IssueCloser,
+} from "../gh.js";
 import { validateDependencyId } from "../id.js";
-import type { Dep, Hold, HoldKind, TaskLink, TaskPatch } from "../model.js";
+import type {
+  Dep,
+  Hold,
+  HoldKind,
+  Task,
+  TaskLink,
+  TaskPatch,
+} from "../model.js";
 import { HOLD_KINDS } from "../model.js";
 import { PUBLIC_FOLLOWUP_KIND } from "../public-followup.js";
 import type { Store } from "../store.js";
@@ -40,6 +53,8 @@ examples:
 export const DONE_HELP = `usage: tasks-axi done <id> [flags]
 aliases: close
 Re-running on an already Done task backfills links/notes without changing the close date.
+A linked GitHub issue (\`--issue\` on add/update) is closed via the gh CLI, fail-soft:
+a failed close is reported loudly but never fails the done-transition.
 flags:
   --pr <url>, --report <path>, --note "<text>"
   --dropped   record the close as deliberately abandoned (resolution: dropped)
@@ -211,25 +226,75 @@ export async function doneCommand(
   }
 
   const task = await store.transition(id, "done", opts);
+  const issueCloses = await closeLinkedIssues(
+    task,
+    context?.issueCloser ?? ghIssueCloser,
+  );
   const pruned = await pruneDone(store, keep, noPrune);
   const all = (await store.list({})).items;
 
   return renderMutation({
     json,
     confirm: `done ${id} -> ${stateLabel(task.state)}${doneExtras(pr, report, dropped)}${prunedNote(pruned)}`,
+    notices: issueCloseNotices(issueCloses),
     jsonPayload: {
       ok: true,
       action: "done",
       pruned,
+      ...(issueCloses.length > 0 ? { issue_close: issueCloses } : {}),
       task: taskToJson(task, all),
     },
-    suggestions: getSuggestions({
-      action: "done",
-      id,
-      state: task.state,
-      globals: context?.suggestionGlobals,
-    }),
+    suggestions: [
+      ...issueCloseSuggestions(issueCloses, task.resolution === "dropped"),
+      ...getSuggestions({
+        action: "done",
+        id,
+        state: task.state,
+        globals: context?.suggestionGlobals,
+      }),
+    ],
   });
+}
+
+/**
+ * Close-on-done: close every linked issue via the gh CLI, commenting with the
+ * task's PR URL when one is recorded. A dropped close maps to gh's
+ * "not planned" reason. Fail-soft by contract - the transition has already
+ * landed, so failures become outcomes for loud reporting, never thrown errors.
+ */
+async function closeLinkedIssues(
+  task: Task,
+  closer: IssueCloser,
+): Promise<IssueCloseOutcome[]> {
+  const urls = task.links
+    .filter((link) => link.kind === "issue")
+    .map((link) => link.url);
+  if (urls.length === 0) return [];
+  const dropped = task.resolution === "dropped";
+  const prUrl = task.links.find((link) => link.kind === "pr")?.url;
+  const comment =
+    prUrl !== undefined
+      ? `Closed by tasks-axi: task ${task.id} ${dropped ? "dropped" : "completed"} via ${prUrl}`
+      : undefined;
+  return closeIssues(urls, closer, comment, dropped ? "not planned" : "completed");
+}
+
+function issueCloseNotices(outcomes: IssueCloseOutcome[]): string[] {
+  return outcomes.map((o) =>
+    o.closed
+      ? `issue: closed ${o.url}`
+      : `issue: CLOSE FAILED ${o.url} - ${o.error ?? "unknown error"} (the task is Done; the issue is still open)`,
+  );
+}
+
+function issueCloseSuggestions(
+  outcomes: IssueCloseOutcome[],
+  dropped: boolean,
+): string[] {
+  const reason = dropped ? '"not planned"' : "completed";
+  return outcomes
+    .filter((o) => !o.closed)
+    .map((o) => `Close it manually: gh issue close ${o.url} --reason ${reason}`);
 }
 
 /** The `(dropped, pr X, report Y)` parenthetical for a done confirmation, omitted when bare. */

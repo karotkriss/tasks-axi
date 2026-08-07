@@ -378,6 +378,48 @@ describe("crud commands", () => {
       }
     });
 
+    it("adds a task with a linked issue and surfaces it in show and list", async () => {
+      const b = makeBacklog();
+      try {
+        await addCommand(
+          [
+            "new-q1",
+            "mirrored task",
+            "--issue",
+            "https://github.com/o/r/issues/7",
+          ],
+          b.ctx,
+        );
+        expect(b.read()).toContain("https://github.com/o/r/issues/7");
+        const shown = await showCommand(["new-q1"], b.ctx);
+        expect(shown).toContain("issue:https://github.com/o/r/issues/7");
+        const listed = await listCommand(["--fields", "links"], b.ctx);
+        expect(listed).toContain("issue:https://github.com/o/r/issues/7");
+      } finally {
+        b.cleanup();
+      }
+    });
+
+    it("rejects a malformed issue link before creating a task", async () => {
+      const b = makeBacklog();
+      try {
+        await expect(
+          addCommand(
+            [
+              "new-q1",
+              "mirrored task",
+              "--issue",
+              "https://github.com/o/r/pull/9",
+            ],
+            b.ctx,
+          ),
+        ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+        expect(b.read()).not.toContain("new-q1");
+      } finally {
+        b.cleanup();
+      }
+    });
+
     it.each<[string, string[]]>([
       ["--body", ["--body", "   "]],
       ["--repo", ["--repo="]],
@@ -897,6 +939,33 @@ describe("crud commands", () => {
         const out = await showCommand(["cert-cleanup"], b.ctx);
         expect(out).toContain("priority: 3");
         expect(b.read()).toContain("(priority: 3)");
+      } finally {
+        b.cleanup();
+      }
+    });
+
+    it("records a linked issue through update", async () => {
+      const b = makeBacklog();
+      try {
+        const out = await updateCommand(
+          [
+            "cert-cleanup",
+            "--issue",
+            "https://github.com/o/r/issues/7",
+            "--json",
+          ],
+          b.ctx,
+        );
+        const parsed = JSON.parse(out) as {
+          changed: string[];
+          task: { links: { kind: string; url: string }[] };
+        };
+        expect(parsed.changed).toContain("links");
+        expect(parsed.task.links).toContainEqual({
+          kind: "issue",
+          url: "https://github.com/o/r/issues/7",
+        });
+        expect(b.read()).toContain("https://github.com/o/r/issues/7");
       } finally {
         b.cleanup();
       }

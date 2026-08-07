@@ -51,6 +51,8 @@ export interface MutationOutput {
   confirm: string;
   /** Emit the `already: true` no-op signal. */
   already?: boolean;
+  /** Side-effect result lines emitted right after the confirmation. */
+  notices?: string[];
   /** An optional structured detail block (e.g. the full task record). */
   detail?: string;
   /** State-aware next-step hints (already resolved to lines). */
@@ -66,6 +68,9 @@ export function renderMutation(output: MutationOutput): string {
   if (output.json) return renderJson(output.jsonPayload);
   const blocks = [renderConfirm(output.confirm)];
   if (output.already) blocks.push("already: true");
+  if (output.notices && output.notices.length > 0) {
+    blocks.push(output.notices.join("\n"));
+  }
   if (output.detail) blocks.push(output.detail);
   if (output.suggestions && output.suggestions.length > 0) {
     blocks.push(renderHelp(output.suggestions));

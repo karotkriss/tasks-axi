@@ -344,6 +344,33 @@ describe("markdown grammar", () => {
       });
       expect(links).toContainEqual({ kind: "report", url: "data/x/report.md" });
     });
+
+    it("derives an issue link rather than a doc link from an issue url", () => {
+      const links = deriveLinks(
+        "mirrors https://github.com/o/r/issues/7 spec https://example.com/spec",
+      );
+      expect(links).toContainEqual({
+        kind: "issue",
+        url: "https://github.com/o/r/issues/7",
+      });
+      expect(links).toContainEqual({
+        kind: "doc",
+        url: "https://example.com/spec",
+      });
+      expect(links.filter((l) => l.kind === "doc")).toHaveLength(1);
+    });
+
+    it("round-trips a bullet carrying an issue url byte-exact", () => {
+      const src =
+        "## Queued\n- [ ] fleet-sync-f3 - sync fleet state https://github.com/o/r/issues/7 (repo: fleet)\n\n## Done\n";
+      const doc = parseBacklog(src);
+      const task = tasksOf(doc)[0];
+      expect(task.links).toContainEqual({
+        kind: "issue",
+        url: "https://github.com/o/r/issues/7",
+      });
+      expect(renderBacklog(doc)).toBe(src);
+    });
   });
 
   describe("canonical render", () => {

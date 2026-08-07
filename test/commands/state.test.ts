@@ -131,6 +131,167 @@ describe("state commands", () => {
       }
     });
 
+    it("closes the linked issue on done, commenting with the recorded pr", async () => {
+      const b = makeBacklog();
+      const calls: { url: string; comment?: string; reason: string }[] = [];
+      b.ctx.issueCloser = async (url, comment, reason) => {
+        calls.push({ url, comment, reason });
+      };
+      try {
+        await b.store.update("cert-cleanup", {
+          addLinks: [
+            { kind: "issue", url: "https://github.com/o/r/issues/7" },
+          ],
+        });
+        const out = await doneCommand(
+          [
+            "cert-cleanup",
+            "--pr",
+            "https://github.com/o/r/pull/9",
+            "--no-prune",
+          ],
+          b.ctx,
+        );
+        expect(calls).toEqual([
+          {
+            url: "https://github.com/o/r/issues/7",
+            comment:
+              "Closed by tasks-axi: task cert-cleanup completed via https://github.com/o/r/pull/9",
+            reason: "completed",
+          },
+        ]);
+        expect(out).toContain(
+          "issue: closed https://github.com/o/r/issues/7",
+        );
+        expect(b.read()).toContain("- [x] cert-cleanup");
+      } finally {
+        b.cleanup();
+      }
+    });
+
+    it("closes a dropped task's issue with the not planned reason", async () => {
+      const b = makeBacklog();
+      const calls: { url: string; comment?: string; reason: string }[] = [];
+      b.ctx.issueCloser = async (url, comment, reason) => {
+        calls.push({ url, comment, reason });
+      };
+      try {
+        await b.store.update("cert-cleanup", {
+          addLinks: [
+            { kind: "issue", url: "https://github.com/o/r/issues/7" },
+          ],
+        });
+        const out = await doneCommand(
+          ["cert-cleanup", "--dropped", "--no-prune"],
+          b.ctx,
+        );
+        expect(out).toContain("done cert-cleanup -> Done (dropped)");
+        expect(calls).toEqual([
+          { url: "https://github.com/o/r/issues/7", reason: "not planned" },
+        ]);
+      } finally {
+        b.cleanup();
+      }
+    });
+
+    it("does not attempt an issue close when no issue is linked", async () => {
+      const b = makeBacklog();
+      const calls: string[] = [];
+      b.ctx.issueCloser = async (url) => {
+        calls.push(url);
+      };
+      try {
+        const out = await doneCommand(["cert-cleanup", "--no-prune"], b.ctx);
+        expect(calls).toEqual([]);
+        expect(out).not.toContain("issue:");
+      } finally {
+        b.cleanup();
+      }
+    });
+
+    it("completes the task and reports loudly when the issue close fails", async () => {
+      const b = makeBacklog();
+      const calls: { url: string; comment?: string }[] = [];
+      b.ctx.issueCloser = async (url, comment) => {
+        calls.push({ url, comment });
+        throw new Error("gh CLI not found on PATH");
+      };
+      try {
+        await b.store.update("cert-cleanup", {
+          addLinks: [
+            { kind: "issue", url: "https://github.com/o/r/issues/7" },
+          ],
+        });
+        const out = await doneCommand(["cert-cleanup", "--no-prune"], b.ctx);
+        expect(out).toContain("ok: done cert-cleanup -> Done");
+        expect(out).toContain(
+          "issue: CLOSE FAILED https://github.com/o/r/issues/7 - gh CLI not found on PATH",
+        );
+        expect(out).toContain(
+          "gh issue close https://github.com/o/r/issues/7 --reason completed",
+        );
+        // No pr recorded, so the close is attempted without a comment.
+        expect(calls).toEqual([{ url: "https://github.com/o/r/issues/7" }]);
+        expect(b.read()).toContain("- [x] cert-cleanup");
+      } finally {
+        b.cleanup();
+      }
+    });
+
+    it("reports issue close outcomes in --json without failing the done", async () => {
+      const b = makeBacklog();
+      b.ctx.issueCloser = async () => {
+        throw new Error("no auth");
+      };
+      try {
+        await b.store.update("cert-cleanup", {
+          addLinks: [
+            { kind: "issue", url: "https://github.com/o/r/issues/7" },
+          ],
+        });
+        const out = await doneCommand(
+          ["cert-cleanup", "--no-prune", "--json"],
+          b.ctx,
+        );
+        const parsed = JSON.parse(out) as {
+          ok: boolean;
+          issue_close: { url: string; closed: boolean; error?: string }[];
+          task: { state: string };
+        };
+        expect(parsed.ok).toBe(true);
+        expect(parsed.task.state).toBe("done");
+        expect(parsed.issue_close).toEqual([
+          {
+            url: "https://github.com/o/r/issues/7",
+            closed: false,
+            error: "no auth",
+          },
+        ]);
+      } finally {
+        b.cleanup();
+      }
+    });
+
+    it("does not re-close the issue when the task is already done", async () => {
+      const b = makeBacklog();
+      const calls: string[] = [];
+      b.ctx.issueCloser = async (url) => {
+        calls.push(url);
+      };
+      try {
+        await b.store.update("lease-core-t4", {
+          addLinks: [
+            { kind: "issue", url: "https://github.com/o/r/issues/7" },
+          ],
+        });
+        const out = await doneCommand(["lease-core-t4", "--no-prune"], b.ctx);
+        expect(out).toContain("already: true");
+        expect(calls).toEqual([]);
+      } finally {
+        b.cleanup();
+      }
+    });
+
     it("emits a machine-readable task and pruned count with --json", async () => {
       const b = makeBacklog();
       try {

@@ -68,9 +68,11 @@ export function normalizeTypedLink(link: TaskLink): TaskLink {
     const expected =
       link.kind === "pr"
         ? "an http(s) pull request URL ending in /pull/<number>"
-        : link.kind === "report"
-          ? "a data/<id>/report.md path"
-          : "an http(s) URL";
+        : link.kind === "issue"
+          ? "an http(s) issue URL ending in /issues/<number>"
+          : link.kind === "report"
+            ? "a data/<id>/report.md path"
+            : "an http(s) URL";
     throw new AxiError(
       `Task ${link.kind} link must be ${expected}`,
       "VALIDATION_ERROR",

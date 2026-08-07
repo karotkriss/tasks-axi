@@ -48,7 +48,7 @@ export interface Hold {
  */
 export type DepType = "blocked-by" | "parent" | "discovered-from";
 
-export type LinkKind = "pr" | "report" | "doc";
+export type LinkKind = "pr" | "issue" | "report" | "doc";
 
 export interface TaskLink {
   kind: LinkKind;

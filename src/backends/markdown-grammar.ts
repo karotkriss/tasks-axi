@@ -136,6 +136,7 @@ const TAIL_HOLD_KIND = new RegExp(
 const TAIL_HOLD_UNTIL = new RegExp(`\\s*\\(hold-until:\\s*(${DATE})\\)\\s*$`);
 
 const PR_LINK = /https?:\/\/\S+?\/pull\/\d+/g;
+const ISSUE_LINK = /https?:\/\/\S+?\/issues\/\d+/g;
 const REPORT_LINK = /\bdata\/\S+?\/report\.md\b/g;
 const GENERIC_URL = /https?:\/\/\S+/g;
 
@@ -173,9 +174,12 @@ export function deriveLinks(text: string): TaskLink[] {
     links.push({ kind, url });
   };
   for (const m of text.matchAll(PR_LINK)) add("pr", m[0]);
+  for (const m of text.matchAll(ISSUE_LINK)) add("issue", m[0]);
   for (const m of text.matchAll(REPORT_LINK)) add("report", m[0]);
   for (const m of text.matchAll(GENERIC_URL)) {
-    if (!/\/pull\/\d+/.test(m[0])) add("doc", m[0]);
+    if (!/\/pull\/\d+/.test(m[0]) && !/\/issues\/\d+/.test(m[0])) {
+      add("doc", m[0]);
+    }
   }
   return links;
 }
